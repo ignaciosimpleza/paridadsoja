@@ -874,7 +874,7 @@ async function fetchFromPrimaryAPI() {
 
     const payload = tokenManual ? { token: tokenManual } : { username: apiUser, password: apiPass };
 
-    const res = await fetch('/.netlify/functions/primary', {
+    const res = await fetch('/api/primary', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
