@@ -5,47 +5,36 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  const USERNAME = 'ignacio@simplezasa.com';
-  const PASSWORD = 'nuDX73vj2483KSUgvenkj9t50oA0vgvA4WcuRAER';
+  // API Key de producción — usada directamente como X-Auth-Token
+  const API_KEY = 'nuDX73vj2483KSUgvenkj9t50oA0vgvA4WcuRAER';
+
+  const simbolos = {
+    'DLR/MAY26': 'Mayo 26',
+    'DLR/NOV26': 'Nov 26',
+    'DLR/MAY27': 'Mayo 27'
+  };
 
   try {
-    // Login para obtener token
-    const loginRes = await fetch('https://api.primary.com.ar/auth/getToken', {
-      method: 'POST',
-      headers: {
-        'X-Username': USERNAME,
-        'X-Password': PASSWORD
-      }
-    });
-
-    if (!loginRes.ok) {
-      const txt = await loginRes.text();
-      return res.status(401).json({ error: 'Login fallido: ' + loginRes.status + ' — ' + txt.slice(0,200) });
-    }
-
-    const token = loginRes.headers.get('X-Auth-Token');
-    if (!token) {
-      return res.status(401).json({ error: 'Login OK pero sin X-Auth-Token en respuesta' });
-    }
-
-    const simbolos = {
-      'DLR/MAY26': 'Mayo 26',
-      'DLR/NOV26': 'Nov 26',
-      'DLR/MAY27': 'Mayo 27'
-    };
-
     const precios = {};
+    const errores = {};
+
     for (const [simbolo, etiqueta] of Object.entries(simbolos)) {
-      const r = await fetch(
-        `https://api.primary.com.ar/rest/marketdata/get?marketId=ROFX&symbol=${encodeURIComponent(simbolo)}&entries=SE,LA`,
-        { headers: { 'X-Auth-Token': token } }
-      );
-      const d = await r.json();
-      const md = d?.marketData;
-      precios[etiqueta] = md?.SE?.price ?? md?.LA?.price ?? null;
+      const url = `https://api.primary.com.ar/rest/marketdata/get?marketId=ROFX&symbol=${encodeURIComponent(simbolo)}&entries=SE,LA`;
+      const r = await fetch(url, {
+        headers: { 'X-Auth-Token': API_KEY }
+      });
+      const txt = await r.text();
+      try {
+        const d = JSON.parse(txt);
+        const md = d?.marketData;
+        precios[etiqueta] = md?.SE?.price ?? md?.LA?.price ?? null;
+        if (!precios[etiqueta]) errores[etiqueta] = JSON.stringify(d).slice(0,300);
+      } catch {
+        errores[etiqueta] = txt.slice(0, 300);
+      }
     }
 
-    res.status(200).json({ precios });
+    res.status(200).json({ precios, errores });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
