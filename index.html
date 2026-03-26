@@ -869,7 +869,7 @@ async function fetchFromPrimaryAPI() {
     const apiPass     = document.getElementById('api-pass') ? document.getElementById('api-pass').value.trim() : '';
 
     setMain('loading', '⏳ Consultando API…');
-    setDetail('📡 Llamando a /.netlify/functions/primary…');
+    setDetail('📡 Llamando a /api/primary…');
     lbl.textContent = 'Consultando…';
 
     const payload = tokenManual ? { token: tokenManual } : { username: apiUser, password: apiPass };
