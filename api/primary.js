@@ -5,28 +5,10 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
-  // Credenciales hardcodeadas en el servidor (más seguro)
-  const USERNAME = 'paula@simplezasa.com';
-  const PASSWORD = 'nuDX73vj2483KSUgvenkj9t50oA0vgvA4WcuRAER';
+  // API Key de A3 Mercados — se usa directamente como token
+  const API_KEY = 'nuDX73vj2483KSUgvenkj9t50oA0vgvA4WcuRAER';
 
   try {
-    const { token: existingToken } = req.body || {};
-    let token = existingToken;
-
-    if (!token) {
-      const loginRes = await fetch('https://api.primary.com.ar/auth/getToken', {
-        method: 'POST',
-        headers: {
-          'X-Username': USERNAME,
-          'X-Password': PASSWORD
-        }
-      });
-      if (!loginRes.ok) {
-        return res.status(401).json({ error: 'Login fallido: ' + loginRes.status });
-      }
-      token = loginRes.headers.get('X-Auth-Token');
-    }
-
     const simbolos = {
       'DLR/MAY26': 'Mayo 26',
       'DLR/NOV26': 'Nov 26',
@@ -37,14 +19,14 @@ export default async function handler(req, res) {
     for (const [simbolo, etiqueta] of Object.entries(simbolos)) {
       const r = await fetch(
         `https://api.primary.com.ar/rest/marketdata/get?marketId=ROFX&symbol=${encodeURIComponent(simbolo)}&entries=SE,LA`,
-        { headers: { 'X-Auth-Token': token } }
+        { headers: { 'X-Auth-Token': API_KEY } }
       );
       const d = await r.json();
       const md = d?.marketData;
       precios[etiqueta] = md?.SE?.price ?? md?.LA?.price ?? null;
     }
 
-    res.status(200).json({ token, precios });
+    res.status(200).json({ precios });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
