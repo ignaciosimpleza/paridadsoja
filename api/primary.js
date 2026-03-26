@@ -5,14 +5,21 @@ export default async function handler(req, res) {
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
+  // Credenciales hardcodeadas en el servidor (más seguro)
+  const USERNAME = 'paula@simplezasa.com';
+  const PASSWORD = 'nuDX73vj2483KSUgvenkj9t50oA0vgvA4WcuRAER';
+
   try {
-    const { username, password, token: existingToken } = req.body;
+    const { token: existingToken } = req.body || {};
     let token = existingToken;
 
     if (!token) {
       const loginRes = await fetch('https://api.primary.com.ar/auth/getToken', {
         method: 'POST',
-        headers: { 'X-Username': username, 'X-Password': password }
+        headers: {
+          'X-Username': USERNAME,
+          'X-Password': PASSWORD
+        }
       });
       if (!loginRes.ok) {
         return res.status(401).json({ error: 'Login fallido: ' + loginRes.status });
