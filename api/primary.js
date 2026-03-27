@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     const errores = {};
 
     for (const [simbolo, etiqueta] of Object.entries(simbolos)) {
-      const url = `https://api.primary.com.ar/rest/marketdata/get?marketId=ROFX&symbol=${encodeURIComponent(simbolo)}&entries=SE,LA`;
+      const url = `https://api.primary.com.ar/rest/marketdata/get?marketId=ROFX&symbol=${encodeURIComponent(simbolo)}&entries=LA,CL,SE,BI`;
       const r = await fetch(url, {
         headers: { 'X-Auth-Token': API_KEY }
       });
@@ -27,7 +27,7 @@ export default async function handler(req, res) {
       try {
         const d = JSON.parse(txt);
         const md = d?.marketData;
-        precios[etiqueta] = md?.SE?.price ?? md?.LA?.price ?? null;
+        precios[etiqueta] = md?.LA?.price ?? md?.CL?.price ?? md?.SE?.price ?? md?.BI?.price ?? null;
         if (!precios[etiqueta]) errores[etiqueta] = JSON.stringify(d).slice(0,300);
       } catch {
         errores[etiqueta] = txt.slice(0, 300);
