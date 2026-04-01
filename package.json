@@ -1,8 +1,24 @@
 {
-  "name": "paridad-soja",
-  "version": "1.0.0",
-  "dependencies": {
-    "@sparticuz/chromium": "^123.0.0",
-    "puppeteer-core": "^22.0.0"
+  "functions": {
+    "api/scrape.js": {
+      "memory": 1024,
+      "maxDuration": 30
+    }
   }
 }
+```
+
+Commit → **"Commit changes"**
+
+---
+
+## Paso 2 — Obtener la URL correcta
+
+Mientras Vercel redeploya, entrá al dashboard de Vercel → tu proyecto → arriba a la derecha dice **"Visit"** o hay un dominio tipo:
+```
+paridadsoja.vercel.app
+```
+
+Usá **esa URL** (sin el sufijo largo) para probar:
+```
+https://paridadsoja.vercel.app/api/scrape
