@@ -869,15 +869,17 @@ async function fetchFromPrimaryAPI() {
     const apiPass     = document.getElementById('api-pass') ? document.getElementById('api-pass').value.trim() : '';
 
     setMain('loading', '⏳ Consultando API…');
-    setDetail('📡 Llamando a /api/primary…');
+    setDetail('📡 Llamando a https://raw.githubusercontent.com/ignaciosimpleza/ignaciosimpleza/main/data/prices.json…');
     lbl.textContent = 'Consultando…';
 
     const payload = tokenManual ? { token: tokenManual } : { username: apiUser, password: apiPass };
 
-    const res = await fetch('/api/primary', {
-      method: 'POST',
+    const res = await fetch('https://raw.githubusercontent.com/TU-USUARIO/TU-REPO/main/data/prices.json', {
+  method: 'GET'
+});
+      method: 'GET',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      
     });
 
     const data = await res.json();
