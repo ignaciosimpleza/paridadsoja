@@ -6,19 +6,3 @@
     }
   }
 }
-```
-
-Commit → **"Commit changes"**
-
----
-
-## Paso 2 — Obtener la URL correcta
-
-Mientras Vercel redeploya, entrá al dashboard de Vercel → tu proyecto → arriba a la derecha dice **"Visit"** o hay un dominio tipo:
-```
-paridadsoja.vercel.app
-```
-
-Usá **esa URL** (sin el sufijo largo) para probar:
-```
-https://paridadsoja.vercel.app/api/scrape
