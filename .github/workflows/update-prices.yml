@@ -19,33 +19,36 @@ jobs:
           node -e "
           const { chromium } = require('playwright');
           const fs = require('fs');
+
+          // *** CONFIGURAR ACÁ LOS MESES A BUSCAR ***
+          const SIMBOLOS = {
+            'DLR/MAY26': 'Mayo 26',
+            'DLR/NOV26': 'Nov 26',
+            'DLR/MAY27': 'Mayo 27'
+          };
+
           (async () => {
             const browser = await chromium.launch();
             const page = await browser.newPage();
-            await page.goto('https://matbarofex.primary.ventures/fyo/futurosfinancieros', { waitUntil: 'networkidle', timeout: 30000 });
-            await page.waitForSelector('table tbody tr', { timeout: 20000 });
-            const precios = await page.evaluate(() => {
-              const result = {};
-              const obj = { 'DLR/MAY26': 'Mayo 26', 'DLR/NOV26': 'Nov 26', 'DLR/MAY27': 'Mayo 27' };
-              document.querySelectorAll('table tbody tr').forEach(row => {
-                const cells = row.querySelectorAll('td');
-                if (!cells.length) return;
-                const inst = cells[0]?.textContent?.trim();
-                if (!obj[inst]) return;
-                for (let i = 6; i >= 1; i--) {
-                  const raw = cells[i]?.textContent?.trim()?.replace(/\./g,'')?.replace(',','.');
-                  const num = parseFloat(raw);
-                  if (num > 100) { result[obj[inst]] = num; break; }
-                }
-              });
-              return result;
+            await page.goto('https://matbarofex.primary.ventures/fyo/futurosfinancieros', {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000
             });
+            await page.waitForTimeout(8000);
+            await page.screenshot({ path: 'screenshot.png', fullPage: true });
+            const html = await page.content();
+            fs.writeFileSync('pagina.html', html);
+            console.log('Screenshot guardado');
             await browser.close();
-            fs.mkdirSync('data', { recursive: true });
-            fs.writeFileSync('data/prices.json', JSON.stringify({ precios, updated: new Date().toISOString() }, null, 2));
-            console.log('OK:', JSON.stringify(precios));
           })().catch(e => { console.error(e); process.exit(1); });
           "
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: debug
+          path: |
+            screenshot.png
+            pagina.html
       - run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
