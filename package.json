@@ -1,8 +1,4 @@
 {
-  "functions": {
-    "api/scrape.js": {
-      "memory": 1024,
-      "maxDuration": 30
-    }
-  }
+  "name": "paridad-soja",
+  "version": "1.0.0"
 }
