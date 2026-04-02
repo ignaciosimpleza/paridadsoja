@@ -1,5 +1,5 @@
-// api/fob.js — MAGYP WebService API (diseñada para acceso programático)
-// Docs: https://www.magyp.gob.ar/sitio/areas/ss_mercados_agropecuarios/fob_oficiales/_archivos/000021_Precios%20Fob%20Api.php
+// api/fob.js — MAGYP WebService FOB (mismo formato NCM que DINEM)
+// La API devuelve: {"posts":[{"posicion":"10011900110H","precio":258,...}]}
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -7,16 +7,49 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const BASE = 'https://www.magyp.gob.ar/sitio/areas/ss_mercados_agropecuarios/ws/ssma/precios_fob.php?Fecha=';
-  const log  = [];
+
+  // Mapeo NCM → campo del análisis (confirmado con datos reales 01/04/2026)
+  const NCM = {
+    '12019000190C': 'soja',    // Habas de soja, granel
+    '15071000100Q': 'aceite',  // Aceite de soja crudo
+    '23040010100B': 'harina',  // Pellets/harina de soja
+    '10059010120A': 'maiz',    // Maíz, granel
+    '10011900110H': 'trigo',   // Trigo pan, granel
+  };
 
   function fmtDDMMYYYY(d) {
     return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
   }
 
-  // Intentar hasta 30 días hábiles hacia atrás
-  const today = new Date();
-  let rawSample = null;
+  function buildSeries(posts) {
+    const series = {};
+    posts.forEach(item => {
+      const prod = NCM[item.posicion];
+      if (!prod) return;
+      if (!series[prod]) series[prod] = [];
+      series[prod].push({
+        p: item.precio,
+        md: item.mesDesde,  ad: item.añoDesde,
+        mh: item.mesHasta,  ah: item.añoHasta
+      });
+    });
+    return series;
+  }
 
+  function getSpot(series) {
+    const now = new Date();
+    const t   = now.getFullYear() * 12 + (now.getMonth() + 1);
+    const spot = {};
+    Object.entries(series).forEach(([prod, s]) => {
+      const m = s.find(r => t >= r.ad*12+r.md && t <= r.ah*12+r.mh);
+      spot[prod] = m?.p ?? s[0]?.p ?? null;
+    });
+    return spot;
+  }
+
+  const today = new Date();
+
+  // Probar los últimos 30 días hábiles
   for (let i = 1; i <= 60; i++) {
     const d = new Date(today);
     d.setDate(today.getDate() - i);
@@ -27,75 +60,50 @@ export default async function handler(req, res) {
 
     try {
       const r = await fetch(BASE + encodeURIComponent(fechaStr), {
-        signal: AbortSignal.timeout(6000),
-        headers: { 'Accept': 'application/json, */*', 'User-Agent': 'Mozilla/5.0' }
+        signal: AbortSignal.timeout(8000),
+        headers: { 'Accept': '*/*', 'User-Agent': 'Mozilla/5.0' }
       });
-
-      if (!r.ok) { log.push(`${fechaStr}: HTTP ${r.status}`); continue; }
+      if (!r.ok) continue;
 
       const text = await r.text();
-      const data = JSON.parse(text);
+      if (!text || text.trim().startsWith('<')) continue;
 
-      log.push(`${fechaStr}: ${Array.isArray(data) ? data.length + ' items' : JSON.stringify(data).substring(0,80)}`);
+      const json  = JSON.parse(text);
+      // ⚠️ Respuesta es {"posts":[...]} — NO un array directo
+      const posts = json.posts || (Array.isArray(json) ? json : []);
+      if (!posts.length) continue;
 
-      // Guardar muestra del primer resultado no vacío para debug
-      if (!rawSample && Array.isArray(data) && data.length > 0) {
-        rawSample = { fecha: fechaStr, sample: data.slice(0, 5) };
-      }
+      const series = buildSeries(posts);
+      if (!series.soja) continue; // sin soja → día sin datos útiles
 
-      if (!Array.isArray(data) || data.length === 0) continue;
-
-      // ── Intentar parsear la respuesta (probamos múltiples formatos) ──
-      const spot   = { soja:null, aceite:null, harina:null, maiz:null, trigo:null };
-      const series = {};
-
-      data.forEach(item => {
-        // Normalizar campos (pueden venir en mayús o minús)
-        const prod  = String(item.Producto || item.producto || item.PRODUCTO || item.descripcion || '').toUpperCase().trim();
-        const precio = parseFloat(item.Precio || item.precio || item.PRECIO || item.fob || 0);
-        if (!prod || !precio || precio <= 0) return;
-
-        // Mapeo por palabras clave en el nombre del producto
-        let campo = null;
-        if (prod.includes('SOJA') && !prod.includes('ACEITE') && !prod.includes('PELLET') && !prod.includes('HARINA') && !prod.includes('EXPELLER')) campo = 'soja';
-        else if (prod.includes('ACEITE') && prod.includes('SOJA')) campo = 'aceite';
-        else if ((prod.includes('PELLET') || prod.includes('HARINA') || prod.includes('EXPELLER')) && prod.includes('SOJA')) campo = 'harina';
-        else if (prod.includes('MA') && (prod.includes('MAÍ') || prod.includes('MAI') || prod.includes('MAIZ'))) campo = 'maiz';
-        else if (prod.includes('TRIGO')) campo = 'trigo';
-
-        if (campo && !spot[campo]) spot[campo] = precio;
+      const spot = getSpot(series);
+      return res.status(200).json({
+        fecha: fechaISO,
+        circular: posts[0]?.circular ?? null,
+        spot,
+        series,
+        source: 'MAGYP'
       });
 
-      // Si obtuvimos al menos soja, es válido
-      if (spot.soja) {
-        return res.status(200).json({ fecha:fechaISO, circular:null, spot, series, source:'MAGYP', log, rawSample });
-      }
-
-      // Si tenemos items pero no pudimos parsear, loguear para debug
-      if (rawSample && !spot.soja) {
-        log.push(`PARSE_FAIL: campos disponibles: ${Object.keys(rawSample.sample[0]).join(',')}`);
-      }
-
     } catch(e) {
-      log.push(`${fechaStr}: ERROR ${e.message}`);
+      // seguir con el día anterior
     }
   }
 
-  // Fallback a datos.gob.ar
+  // Fallback: datos.gob.ar
   try {
-    log.push('Usando fallback datos.gob.ar...');
     const ids = '358.1_HABAS_SOJAADO__52,358.1_ACEITE_SOJNEL__18,358.1_TORTAS_EXPXTR__56,358.1_MAIZ_DEMASADO__52,358.1_TRIGO_GRANADO__41';
     const r   = await fetch(`https://apis.datos.gob.ar/series/api/series/?ids=${ids}&limit=1&sort=desc`);
     const j   = await r.json();
     const row = j.data?.[0];
     if (row) {
       return res.status(200).json({
-        fecha: row[0], source:'fallback_datosgob',
+        fecha: row[0], source: 'fallback_datosgob',
         spot: { soja:row[1], aceite:row[2], harina:row[3], maiz:row[4], trigo:row[5] },
-        series: {}, log, rawSample
+        series: {}
       });
     }
-  } catch(e) { log.push('fallback error: ' + e.message); }
+  } catch(e) {}
 
-  return res.status(502).json({ error:'Sin datos disponibles', log, rawSample });
+  return res.status(502).json({ error: 'Sin datos disponibles' });
 }
