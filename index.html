@@ -6,6 +6,8 @@
 <title>Paridad de Granos — Simpleza</title>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <style>
 :root {
   /* Simpleza Brand */
@@ -149,6 +151,17 @@ tr.r-fas td:not(:first-child){color:#1a6b48}
 .cfg-inp{width:76px;border:1px solid var(--border);border-radius:6px;padding:3px 7px;font-family:'Sora',sans-serif;font-size:11.5px;text-align:right;color:var(--sidebar)}
 .cfg-inp:focus{outline:none;border-color:var(--verde)}
 .cfg-note{font-size:10px;color:var(--gris);margin-top:10px}
+.save-btn{width:100%;background:var(--sidebar);color:#fff;border:none;border-radius:8px;padding:10px 16px;
+  font-family:'Sora',sans-serif;font-size:12px;font-weight:700;cursor:pointer;display:flex;
+  align-items:center;justify-content:center;gap:8px;transition:var(--T);margin-top:18px}
+.save-btn:hover{background:#2a3d40;transform:translateY(-1px)}
+.save-btn:disabled{opacity:.6;cursor:not-allowed;transform:none}
+.fb-status{font-size:10.5px;text-align:center;margin-top:8px;padding:6px 10px;border-radius:6px}
+.fb-status.ok{background:rgba(50,232,169,.1);color:#1a6b48;border:1px solid rgba(50,232,169,.25)}
+.fb-status.err{background:rgba(205,97,85,.1);color:#7a2f28;border:1px solid rgba(205,97,85,.25)}
+.fb-status.loading{background:rgba(247,220,111,.1);color:#7a5a00;border:1px solid rgba(247,220,111,.3)}
+.fb-indicator{font-size:9.5px;color:rgba(255,255,255,.3);text-align:center;margin-top:5px}
+.fb-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#32E8A9;margin-right:4px}
 
 /* ── BADGE ── */
 .premio{color:#1a7a52;font-weight:700}
@@ -184,6 +197,7 @@ tr.r-fas td:not(:first-child){color:#1a6b48}
       <span id="updIc">⟳</span> Actualizar datos
     </button>
     <div class="sb-status" id="sbStatus">Sin datos · Clic en Actualizar</div>
+    <div class="fb-indicator" id="fbIndicator">⬤ Firebase desconectado</div>
   </div>
 </nav>
 
@@ -383,6 +397,19 @@ tr.r-fas td:not(:first-child){color:#1a6b48}
         <div class="cfg-row"><span class="cfg-lbl">MATBA precios en u$s</span><span class="src-warn">Manual · matbarofex.com.ar</span></div>
         <div class="cfg-row"><span class="cfg-lbl">Retenciones y fobbing</span><span class="src-warn">Manual · Configuración</span></div>
       </div>
+      
+      <!-- Firebase Save/Load -->
+      <div class="cfg-c" style="margin-bottom:18px">
+        <div class="cfg-title">☁️ Sincronización Firebase</div>
+        <p style="font-size:11.5px;color:var(--gris);line-height:1.6;margin-bottom:12px">
+          Guardá los parámetros en la nube para que cualquier dispositivo los cargue automáticamente.
+        </p>
+        <div id="fbStatus" class="fb-status" style="display:none"></div>
+        <button class="save-btn" id="btnSave" onclick="saveConfig()">
+          <span id="saveIcon">☁</span> Guardar parámetros en Firebase
+        </button>
+        <div id="lastSaved" style="font-size:10px;color:var(--gris);text-align:center;margin-top:8px"></div>
+      </div>
     </div>
 
   </div>
@@ -433,7 +460,7 @@ function genVtos(){
 // STATE
 // ═══════════════════════════════════════
 const S = {
-  fob: { soja:null, aceite:null, harina:null, maiz:null, trigo:null, fecha:null },
+  fob: { soja:null, aceite:null, harina:null, maiz:null, trigo:null, fecha:null, series:{}, circular:null },
   dlr: [],  // [{contrato, label, tc, mes, año}]
   vtos: genVtos(),
   gvtos: [
@@ -461,7 +488,16 @@ const MESES = {ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,oct:10,nov:
                jan:1,apr:4,aug:8,dec:12};
 const MLAB = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
 
-function getFOB(c){ return {soja:S.fob.soja,aceite:S.fob.aceite,harina:S.fob.harina,maiz:S.fob.maiz,trigo:S.fob.trigo}[c]??null }
+function getFOB(c, mes, año){
+  // Si hay datos de serie y pedimos un mes/año específico, usamos el precio forward
+  if(mes && año && S.fob.series?.[c]){
+    const t = año*12 + mes;
+    for(const r of S.fob.series[c]){
+      if(t >= r.ad*12+r.md && t <= r.ah*12+r.mh) return r.p;
+    }
+  }
+  return {soja:S.fob.soja, aceite:S.fob.aceite, harina:S.fob.harina, maiz:S.fob.maiz, trigo:S.fob.trigo}[c] ?? null;
+}
 function getRet(c){ return S.ret[c]??0 }
 function getFobb(c){ return S.fob_g[c]??0 }
 
@@ -590,110 +626,45 @@ async function fetchDLR(){
 }
 
 async function fetchFOBdata(){
-  // MAGYP API: busca el último día hábil con datos (hasta 10 días atrás)
-  const BASE = 'https://www.magyp.gob.ar/sitio/areas/ss_mercados_agropecuarios/ws/ssma/precios_fob.php?Fecha=';
+  // Proxy via Vercel /api/fob → DINEM MAGYP (datos del mismo día)
+  // Fallback a datos.gob.ar si Vercel no está disponible
   
-  // Mapeo de productos MAGYP a nuestros campos
-  // La API devuelve array de objetos con campos: Fecha, Producto, Precio, etc.
-  // Productos clave: "SOJA", "ACEITE DE SOJA", "PELLETS DE SOJA", "MAIZ", "TRIGO"
-  const PROD_MAP = {
-    'SOJA': 'soja',
-    'POROTO DE SOJA': 'soja',
-    'HABAS DE SOJA': 'soja',
-    'ACEITE DE SOJA': 'aceite',
-    'PELLETS DE SOJA': 'harina',
-    'HARINA DE SOJA': 'harina',
-    'MAÍZ': 'maiz',
-    'MAIZ': 'maiz',
-    'TRIGO': 'trigo',
-    'TRIGO PAN': 'trigo'
-  };
-
-  function fmtFecha(d){
-    const dd=String(d.getDate()).padStart(2,'0');
-    const mm=String(d.getMonth()+1).padStart(2,'0');
-    const yyyy=d.getFullYear();
-    return `${dd}/${mm}/${yyyy}`;
-  }
-  
-  function esDiaHabil(d){
-    const dow=d.getDay();
-    return dow!==0&&dow!==6; // no sábado ni domingo
-  }
-
-  // Intentar hasta 10 días hábiles hacia atrás
-  const hoy=new Date();
-  let encontrado=false;
-  
-  for(let i=0; i<14&&!encontrado; i++){
-    const fecha=new Date(hoy);
-    fecha.setDate(hoy.getDate()-i);
-    if(!esDiaHabil(fecha)) continue;
+  try {
+    const res = await fetch('/api/fob');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
     
-    const fechaStr=fmtFecha(fecha);
-    const isoStr=fecha.toISOString().split('T')[0];
+    S.fob.fecha   = data.fecha;
+    S.fob.soja    = data.spot.soja;
+    S.fob.aceite  = data.spot.aceite;
+    S.fob.harina  = data.spot.harina;
+    S.fob.maiz    = data.spot.maiz;
+    S.fob.trigo   = data.spot.trigo;
+    S.fob.series  = data.series || {};  // precios por mes/año para cada vencimiento
+    S.fob.circular = data.circular;
     
-    try{
-      console.log('[MAGYP] Probando fecha:', fechaStr);
-      const res=await fetch(BASE+encodeURIComponent(fechaStr));
-      const data=await res.json();
-      console.log('[MAGYP] Respuesta:', data?.length, 'registros');
-      
-      if(!Array.isArray(data)||data.length===0) continue;
-      
-      // Resetear FOB
-      S.fob={soja:null,aceite:null,harina:null,maiz:null,trigo:null,fecha:null};
-      
-      // Parsear cada producto
-      data.forEach(item=>{
-        const prod=(item.Producto||item.producto||item.PRODUCTO||'').toUpperCase().trim();
-        const precio=parseFloat(item.Precio||item.precio||item.PRECIO||item.fob||0);
-        if(!precio||precio<=0) return;
-        
-        console.log('[MAGYP producto]', prod, precio);
-        
-        // Buscar match
-        for(const [key,campo] of Object.entries(PROD_MAP)){
-          if(prod.includes(key)||key.includes(prod)){
-            if(!S.fob[campo]) S.fob[campo]=precio; // tomar el primero que matchee
-            break;
-          }
-        }
-      });
-      
-      // Si conseguimos al menos soja, lo tomamos como válido
-      if(S.fob.soja){
-        S.fob.fecha=isoStr;
-        encontrado=true;
-        console.log('[MAGYP OK] Fecha:', isoStr, 'Soja:', S.fob.soja);
-      }
-      
-    } catch(e){
-      console.warn('[MAGYP error]', fechaStr, e.message);
-    }
-  }
-  
-  // Fallback: datos.gob.ar si MAGYP no funcionó
-  if(!encontrado){
-    console.log('[FOB] Fallback a datos.gob.ar...');
+    console.log('[FOB] DINEM OK, fecha:', data.fecha, 'circular:', data.circular);
+    console.log('[FOB] Spot:', data.spot);
+    
+  } catch(e) {
+    // Fallback: datos.gob.ar
+    console.warn('[FOB] Proxy falló, usando fallback datos.gob.ar:', e.message);
     const ids='358.1_HABAS_SOJAADO__52,358.1_ACEITE_SOJNEL__18,358.1_TORTAS_EXPXTR__56,358.1_MAIZ_DEMASADO__52,358.1_TRIGO_GRANADO__41';
-    const res=await fetch(`https://apis.datos.gob.ar/series/api/series/?ids=${ids}&limit=1&sort=desc`);
-    const j=await res.json();
-    const row=j.data?.[0];
+    const r = await fetch(`https://apis.datos.gob.ar/series/api/series/?ids=${ids}&limit=1&sort=desc`);
+    const j = await r.json();
+    const row = j.data?.[0];
     if(row){
-      S.fob.fecha=row[0]; S.fob.soja=row[1]; S.fob.aceite=row[2];
-      S.fob.harina=row[3]; S.fob.maiz=row[4]; S.fob.trigo=row[5];
-      console.log('[FOB] Fallback OK, fecha:', row[0]);
+      S.fob.fecha = row[0]; S.fob.soja = row[1]; S.fob.aceite = row[2];
+      S.fob.harina = row[3]; S.fob.maiz = row[4]; S.fob.trigo = row[5];
+      S.fob.series = {}; S.fob.circular = null;
     }
   }
   
-  // Mostrar fecha del dato en topbar
-  const tag=document.getElementById('fobDateTag');
-  const val=document.getElementById('fobDateVal');
-  if(tag&&val&&S.fob.fecha){ 
-    val.textContent=S.fob.fecha; 
-    tag.style.display='block'; 
-  }
+  // Actualizar fecha del dato en topbar
+  const tag = document.getElementById('fobDateTag');
+  const val = document.getElementById('fobDateVal');
+  if(tag && val && S.fob.fecha){ val.textContent = S.fob.fecha; tag.style.display = 'block'; }
 }
 
 // ═══════════════════════════════════════
@@ -755,17 +726,17 @@ function renderSojaTable(){
   const rows=[
     {lbl:'TC MATBA/Rofex ($/u$s)', cls:'r-tc', vals:vtos.flatMap(v=>cols.map(()=>
       `<input class="ei ${v.tc?'live':''}" value="${v.tc?n0(v.tc):''}" placeholder="TC" onchange="setTC(${v.id},this.value)">`))},
-    {lbl:'FOB (u$s/tn)', cls:'r-fob', vals:vtos.flatMap(()=>cols.map(c=>n2(getFOB(c))))},
-    {lbl:'FOB en $ ($/tn)', cls:'', vals:vtos.flatMap(v=>cols.map(c=>{ const f=getFOB(c); return f&&v.tc?n0(f*v.tc):'—'; }))},
+    {lbl:'FOB (u$s/tn)', cls:'r-fob', vals:vtos.flatMap(v=>cols.map(c=>n2(getFOB(c, v.mes, v.año))))},
+    {lbl:'FOB en $ ($/tn)', cls:'', vals:vtos.flatMap(v=>cols.map(c=>{ const f=getFOB(c,v.mes,v.año); return f&&v.tc?n0(f*v.tc):'—'; }))},
     {lbl:'Retenciones (%)', cls:'', vals:vtos.flatMap(()=>cols.map(c=>`${(getRet(c)*100).toFixed(1)}%`))},
-    {lbl:'Ret. u$s', cls:'', vals:vtos.flatMap(()=>cols.map(c=>{ const f=getFOB(c); return f?n2((f-S.imp)*getRet(c)):'—'; }))},
+    {lbl:'Ret. u$s', cls:'', vals:vtos.flatMap(v=>cols.map(c=>{ const f=getFOB(c,v.mes,v.año); return f?n2((f-S.imp)*getRet(c)):'—'; }))},
     {lbl:'Fobbing (u$s/tn)', cls:'', vals:vtos.flatMap(()=>cols.map(c=>`${getFobb(c)}`))},
-    {lbl:'FAS Teórico (u$s/tn)', cls:'r-fas', vals:vtos.flatMap(()=>cols.map(c=>n2(calcFAS(getFOB(c),getRet(c),getFobb(c)))))},
-    {lbl:'FAS Teórico ($/tn)', cls:'r-fas', vals:vtos.flatMap(v=>cols.map(c=>{ const fas=calcFAS(getFOB(c),getRet(c),getFobb(c)); return fas&&v.tc?n0(fas*v.tc):'—'; }))},
+    {lbl:'FAS Teórico (u$s/tn)', cls:'r-fas', vals:vtos.flatMap(v=>cols.map(c=>n2(calcFAS(getFOB(c,v.mes,v.año),getRet(c),getFobb(c)))))},
+    {lbl:'FAS Teórico ($/tn)', cls:'r-fas', vals:vtos.flatMap(v=>cols.map(c=>{ const fas=calcFAS(getFOB(c,v.mes,v.año),getRet(c),getFobb(c)); return fas&&v.tc?n0(fas*v.tc):'—'; }))},
     {lbl:'MATBA (u$s/tn)', cls:'', vals:vtos.flatMap(v=>cols.map(c=>c==='soja'?n2(v.matba):'—'))},
     {lbl:'Premio / Descuento (u$s)', cls:'', vals:vtos.flatMap(v=>cols.map(c=>{
       if(c!=='soja') return '—';
-      const fas=calcFAS(S.fob.soja,S.ret.soja,S.fob_g.soja);
+      const fas=calcFAS(getFOB('soja',v.mes,v.año),S.ret.soja,S.fob_g.soja);
       const p=fas!=null&&v.matba?v.matba-fas:null;
       if(p==null) return '—';
       return `<span class="${p>=0?'premio':'descuento'}">${p>=0?'+':''}${n2(p)}</span>`;
@@ -1116,9 +1087,147 @@ function showSbar(type,msg){
 // ═══════════════════════════════════════
 // LOGO (copy from existing img if any)
 // ═══════════════════════════════════════
-window.addEventListener('load',()=>{
+// ═══════════════════════════════════════
+// FIREBASE INTEGRATION
+// ═══════════════════════════════════════
+const FB_CONFIG = {
+  apiKey: "AIzaSyB1na3zAQ35A9O8r9YOF2Q0EuDkxmalrlU",
+  authDomain: "paridad-soja.firebaseapp.com",
+  projectId: "paridad-soja",
+  storageBucket: "paridad-soja.firebasestorage.app",
+  messagingSenderId: "1019682825680",
+  appId: "1:1019682825680:web:f685a6bc01d7de010905d5"
+};
+
+let db = null;
+let CONFIG_REF = null;
+
+function initFirebase(){
+  try {
+    if(!firebase.apps.length) firebase.initializeApp(FB_CONFIG);
+    db = firebase.firestore();
+    CONFIG_REF = db.collection('paridad').doc('config');
+    
+    // Escuchar cambios en tiempo real (útil si varios usuarios comparten)
+    CONFIG_REF.onSnapshot(doc => {
+      if(doc.exists){
+        const fbInd = document.getElementById('fbIndicator');
+        if(fbInd) fbInd.innerHTML = '<span class="fb-dot"></span>Firebase conectado';
+      }
+    }, err => {
+      console.warn('[Firebase] listener error:', err.message);
+    });
+    
+    console.log('[Firebase] Inicializado OK');
+    return true;
+  } catch(e){
+    console.error('[Firebase] Init error:', e.message);
+    return false;
+  }
+}
+
+function applyFirebaseConfig(data){
+  if(!data) return;
+  
+  // Actualizar MATBA de vencimientos soja
+  if(data.vtos) data.vtos.forEach(v => {
+    const ex = S.vtos.find(x => x.mes===v.mes && x.año===v.año);
+    if(ex){ ex.matba = v.matba ?? ex.matba; if(v.on !== undefined) ex.on = v.on; }
+  });
+  
+  // Actualizar MATBA de granos
+  if(data.gvtos) data.gvtos.forEach(v => {
+    const ex = S.gvtos.find(x => x.id===v.id);
+    if(ex) ex.matba = v.matba ?? ex.matba;
+  });
+  
+  // Retenciones
+  if(data.ret) Object.entries(data.ret).forEach(([k,v]) => { if(S.ret[k]!==undefined) S.ret[k]=v; });
+  
+  // Fobbing
+  if(data.fob_g) Object.entries(data.fob_g).forEach(([k,v]) => { if(S.fob_g[k]!==undefined) S.fob_g[k]=v; });
+  
+  // Imp
+  if(data.imp) S.imp = data.imp;
+  
+  // Mostrar fecha de última actualización
+  if(data.updatedAt){
+    const ts = data.updatedAt.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt);
+    const fmt = ts.toLocaleString('es-AR', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    const el = document.getElementById('lastSaved');
+    if(el) el.textContent = `Última actualización: ${fmt}`;
+  }
+  
+  renderAll();
+}
+
+async function loadConfig(){
+  if(!CONFIG_REF) return;
+  try {
+    const doc = await CONFIG_REF.get();
+    if(doc.exists){
+      applyFirebaseConfig(doc.data());
+      showFbStatus('ok', '✓ Parámetros cargados desde Firebase');
+      console.log('[Firebase] Config cargada OK');
+    } else {
+      console.log('[Firebase] Sin config guardada, usando defaults');
+    }
+  } catch(e){
+    console.warn('[Firebase] loadConfig error:', e.message);
+    showFbStatus('err', '✗ Error cargando desde Firebase');
+  }
+}
+
+async function saveConfig(){
+  if(!CONFIG_REF){ showFbStatus('err', '✗ Firebase no disponible'); return; }
+  
+  const btn = document.getElementById('btnSave');
+  const ic  = document.getElementById('saveIcon');
+  btn.disabled = true; ic.textContent = '⟳'; ic.style.animation = 'spin .8s linear infinite';
+  showFbStatus('loading', '⏳ Guardando...');
+  
+  try {
+    const payload = {
+      vtos: S.vtos.map(v => ({ id:v.id, label:v.label, mes:v.mes, año:v.año, matba:v.matba, on:v.on })),
+      gvtos: S.gvtos.map(v => ({ id:v.id, cult:v.cult, label:v.label, mes:v.mes, año:v.año, matba:v.matba })),
+      ret: { ...S.ret },
+      fob_g: { ...S.fob_g },
+      imp: S.imp,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    
+    await CONFIG_REF.set(payload);
+    showFbStatus('ok', '✅ Parámetros guardados correctamente');
+    
+    const fmt = new Date().toLocaleString('es-AR', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    const el = document.getElementById('lastSaved');
+    if(el) el.textContent = `Guardado: ${fmt}`;
+    
+  } catch(e){
+    showFbStatus('err', '✗ Error: ' + e.message);
+    console.error('[Firebase] saveConfig error:', e);
+  } finally {
+    btn.disabled = false; ic.style.animation = ''; ic.textContent = '☁';
+  }
+}
+
+function showFbStatus(type, msg){
+  const el = document.getElementById('fbStatus');
+  if(!el) return;
+  el.className = 'fb-status ' + type;
+  el.textContent = msg;
+  el.style.display = 'block';
+  if(type === 'ok') setTimeout(() => el.style.display = 'none', 4000);
+}
+
+window.addEventListener('load', async () => {
   document.head.appendChild(Object.assign(document.createElement('style'),{textContent:'@keyframes spin{to{transform:rotate(360deg)}}'}));
   renderAll();
+  
+  // Inicializar Firebase y cargar configuración guardada
+  if(initFirebase()){
+    await loadConfig();
+  }
 });
 </script>
 </body>
