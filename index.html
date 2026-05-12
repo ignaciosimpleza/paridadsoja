@@ -483,7 +483,10 @@ const S = {
 // ═══════════════════════════════════════
 const n2 = (n,d=2) => n==null?'—':n.toLocaleString('es-AR',{minimumFractionDigits:d,maximumFractionDigits:d});
 const n0 = n => n==null?'—':n.toLocaleString('es-AR',{minimumFractionDigits:0,maximumFractionDigits:0});
-const pN = s => parseFloat(String(s).replace(/\./g,'').replace(',','.'))||null;
+const pN = s => {
+  if(typeof s === 'number') return isNaN(s) ? null : s;
+  return parseFloat(String(s).replace(/\./g,'').replace(',','.'))||null;
+};
 const MESES = {ene:1,feb:2,mar:3,abr:4,may:5,jun:6,jul:7,ago:8,sep:9,oct:10,nov:11,dic:12,
                jan:1,apr:4,aug:8,dec:12};
 const MLAB = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
@@ -528,9 +531,12 @@ async function fetchAll(){
 
   btn.disabled=false; ic.style.animation=''; ic.textContent='⟳';
 
-  // Match TC to vencimientos
-  S.vtos.forEach(v=>{ v.tc=matchDLR(v.mes,v.año); });
-  S.gvtos.forEach(v=>{ v.tc=matchDLR(v.mes,v.año); });
+  // Solo actualizar TCs si fetchDLR trajo datos reales.
+  // Si falla o devuelve vacío, conservamos los TCs anteriores.
+  if(r1.status==='fulfilled' && S.dlr.length > 0) {
+    S.vtos.forEach(v=>{ v.tc=matchDLR(v.mes,v.año); });
+    S.gvtos.forEach(v=>{ v.tc=matchDLR(v.mes,v.año); });
+  }
 
   const ok = [r1,r2].filter(r=>r.status==='fulfilled').length;
   const ts = new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'});
@@ -553,8 +559,10 @@ async function fetchAll(){
 }
 
 async function fetchDLR(){
-  const res = await fetch('https://mercados.ambito.com/dolarfuturo/datos');
+  const res = await fetch('/api/dlr');
+  if (!res.ok) throw new Error('DLR HTTP ' + res.status);
   const raw = await res.json();
+  if (raw.error) throw new Error(raw.error);
   console.log('[Ambito RAW]', JSON.stringify(raw).substring(0, 500));
   
   // Ambito puede devolver array de arrays, array de objetos, o objeto con .data
@@ -850,7 +858,7 @@ const C={
 };
 
 function mkChart(id,cfg){
-  if(S.charts[id]) S.charts[id].destroy();
+  if(S.charts[id]){ S.charts[id].destroy(); delete S.charts[id]; }
   const el=document.getElementById(id); if(!el) return;
   S.charts[id]=new Chart(el,cfg);
 }
